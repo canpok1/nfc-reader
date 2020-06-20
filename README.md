@@ -29,9 +29,23 @@ $ echo 'SUBSYSTEM=="usb", ACTION=="add", ATTRS{idVendor}=="054c", ATTRS{idProduc
 $ sudo mv nfcdev.rules /etc/udev/rules.d/
 ```
 
+2. systemdに登録
+
+```
+# 設定ファイル生成
+sudo ./make_systemd_file.sh
+# 自動起動on
+sudo systemctl enable nfc-reader
+# 起動
+sudo systemctl start nfc-reader
+# ステータス確認
+sudo systemctl status nfc-reader
+```
+
 
 ## 参考
 
 次のページを参考にさせていただきました。
 
 * https://jellyware.jp/kurage/raspi/nfc.html
+* https://qiita.com/DQNEO/items/0b5d0bc5d3cf407cb7ff
