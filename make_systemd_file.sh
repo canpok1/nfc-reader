@@ -7,7 +7,7 @@ cat << EOS > /etc/systemd/system/nfc-reader.service
 Description = nfc reader
 
 [Service]
-ExecStart = ${dir}/start.sh
+ExecStart = ${dir}/start_nfc_reader.sh
 Restart = always
 Type = simple
 
