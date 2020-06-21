@@ -36,10 +36,13 @@ $ sudo mv nfcdev.rules /etc/udev/rules.d/
 sudo ./make_systemd_file.sh
 # 自動起動on
 sudo systemctl enable nfc-reader
+sudo systemctl enable nfc-reader-sender.timer
 # 起動
 sudo systemctl start nfc-reader
+sudo systemctl start nfc-reader-sender
 # ステータス確認
 sudo systemctl status nfc-reader
+sudo systemctl status nfc-reader-sender
 ```
 
 
