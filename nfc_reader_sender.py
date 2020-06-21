@@ -7,23 +7,18 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
 WATCH_TARGET = '/tmp/nfc-reader/*'
-SAMPLE_SPREADSHEET_ID = '1m9qYN7rzIrnciJHBXfxrqJgdDSTeVSeWHroAH5JQ6Rs'
-SAMPLE_RANGE_NAME = 'NFCタグ!A:B'
+SPREADSHEET_ID = '1m9qYN7rzIrnciJHBXfxrqJgdDSTeVSeWHroAH5JQ6Rs'
+RANGE_NAME = 'NFCタグ!A:B'
 
 class SheetClient(object):
     def __init__(self):
-        print('SheetClient.__init__() start')
-
         self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
         self.creds_file = 'credentials.json'
         self.creds_token = 'token.pickle'
         self.creds = self.__load_creds()
         self.service = self.__build_service()
 
-        print('SheetClient.__init__() end')
-
     def __load_creds(self):
-        print('SheetClient.__load_creds() start')
         creds = None
         if os.path.exists(self.creds_token):
             with open(self.creds_token, 'rb') as token:
@@ -37,23 +32,16 @@ class SheetClient(object):
                 creds = flow.run_console()
             with open(self.creds_token, 'wb') as token:
                 pickle.dump(creds, token)
-        print('SheetClient.__load_creds() end')
         return creds
 
     def __build_service(self):
-        print('SheetClient.__build_service() start')
-        service = build('sheets', 'v4', credentials=self.creds)
-        print('SheetClient.__build_service() end')
-        return service
+        return build('sheets', 'v4', credentials=self.creds)
 
     def get_values(self, sheet_id, range_name):
-        print('SheetClient.get_values() start')
         sheet = self.service.spreadsheets()
         result = sheet.values().get(spreadsheetId=sheet_id,
                                     range=range_name).execute()
-        values = result.get('values', [])
-        print('SheetClient.get_values() end')
-        return values
+        return result.get('values', [])
 
     def update(self, sheet_id, rows):
         sheet = self.service.spreadsheets()
@@ -70,11 +58,100 @@ class SheetClient(object):
             }
             body['data'].append(data)
 
-        print(str(body))
-
         result = sheet.values().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
-        print('update result : ')
-        print(result)
+        # print('update result : ')
+        # print(result)
+
+class SendTarget():
+    def __init__(self, path):
+        self.__path = path
+        self.__renamed_path = None
+
+        file_name_with_ext = os.path.basename(path)
+        splited_by_ext = os.path.splitext(file_name_with_ext)
+
+        file_name = splited_by_ext[0]
+        self.__splited = file_name.split('_')
+        self.__is_valid = len(self.__splited) == 3 and file_name == file_name_with_ext
+        self.__is_latest = True
+        self.__is_registered = True
+
+    @property
+    def path(self):
+        return self.__path
+
+    @property
+    def renamed_path(self):
+        return self.__renamed_path
+
+    @property
+    def file_name(self):
+        if self.__renamed_path == None:
+            return os.path.basename(self.__path)
+        return os.path.basename(self.__renamed_path)
+
+    @property
+    def is_valid(self):
+        return self.__is_valid
+
+    @property
+    def status(self):
+        if not self.__is_valid:
+            return 'skip'
+        if not self.__is_latest:
+            return 'skip'
+        return 'send'
+
+    @property
+    def detail(self):
+        if not self.__is_valid:
+            return 'file name is invalid'
+        if not self.__is_latest:
+            return 'datetime is not latest'
+        if self.__is_registered:
+            return 'insert'
+        return 'update'
+
+    @property
+    def idm(self):
+        if self.__is_valid:
+            return self.__splited[0]
+        else:
+            return None
+
+    @property
+    def is_latest(self):
+        pass
+
+    @is_latest.setter
+    def is_latest(self, value):
+        self.__is_latest = value
+
+    @property
+    def is_registered(self, value):
+        self.__is_registered = value
+
+    @property
+    def yyyymmdd(self):
+        if not self.__is_valid:
+            return None
+        return self.__splited[1]
+
+    @property
+    def hhmmss(self):
+        if not self.__is_valid:
+            return None
+        return self.__splited[2]
+
+    def rename(self):
+        path = self.path + '.proc'
+        os.rename(self.path, path)
+        self.__renamed_path = path
+
+    def should_remove(self):
+        if not self.__is_valid:
+            return False
+        return True
 
 class Row():
     def __init__(self, index, idm, yyyymmdd, hhmmss):
@@ -88,59 +165,74 @@ class Row():
         return 'NFCタグ!A' + str(self.index+1) + ':B'
 
     def get_row(self):
-        # return [[self.idm, self.yyyymmdd + self.hhmmss]]
         return [[self.idm, self.datetime.strftime('%Y/%m/%d %H:%M:%S')]]
 
 def main():
+    targets = []
+    should_send = False
+
+    print('---------- load files (' + WATCH_TARGET + ')----------')
     files = sorted(glob.glob(WATCH_TARGET), reverse=True)
+    skip_count = 0
     if len(files) == 0:
+        print('file is empty')
+        return
+    for file in files:
+        target = SendTarget(file)
+        targets.append(target)
+        if target.is_valid:
+            should_send = True
+        else:
+            skip_count+=1
+
+    if should_send:
+        count = len(files)
+        print(str(count) + ' files found. (' + str(skip_count) + ' files skip)')
+    else:
+        for target in targets:
+            print(target.status + ' : ' + target.file_name + ' => ' + target.detail)
         return
 
+    print('---------- rename target files ----------')
+    for target in targets:
+        if not target.is_valid:
+            continue
+        target.rename()
+        print('renamed: ' + target.path + ' => ' + target.renamed_path)
+
+    print('---------- send targets ----------')
     client = SheetClient()
-    values = client.get_values(SAMPLE_SPREADSHEET_ID, SAMPLE_RANGE_NAME)
-    idms = {}
+    values = client.get_values(SPREADSHEET_ID, RANGE_NAME)
+    registered_idms = {}
     for index, value in enumerate(values):
         idm = value[0]
-        idms[idm] = index
+        registered_idms[idm] = index
     maxIndex = len(values)-1
 
-    print('---------- file check ----------')
-    send_targets = {}
-    remove_file_paths = []
-    for file_path in files:
-        file_name = os.path.basename(file_path)
-        splited = file_name.split('_')
-
-        if len(splited) != 3:
-            print('skip : ' + file_name + ' => file name invalid')
+    send_rows = {}
+    for target in targets:
+        if not target.is_valid:
             continue
-
-        remove_file_paths.append(file_path)
-
-        idm = splited[0]
-        yyyymmdd = splited[1]
-        hhmmss = splited[2]
-
-        if send_targets.get(idm) != None:
-            print('skip : ' + file_name + ' => old info')
+        if not send_rows.get(target.idm) == None:
+            target.is_latest = False
             continue
-
-        index = idms.get(idm)
+        index = registered_idms.get(target.idm)
         if index == None:
             maxIndex = maxIndex + 1
-            print('send : ' + file_name + ' => insert:' + str(maxIndex))
-            send_targets[idm] = Row(maxIndex, idm, yyyymmdd, hhmmss)
+            send_rows[target.idm] = Row(maxIndex, target.idm, target.yyyymmdd, target.hhmmss)
         else:
-            print('send : ' + file_name + ' => update:' + str(index))
-            send_targets[idm] = Row(index, idm, yyyymmdd, hhmmss)
+            send_rows[target.idm] = Row(index, target.idm, target.yyyymmdd, target.hhmmss)
 
-    print('---------- send ----------')
-    client.update(SAMPLE_SPREADSHEET_ID, send_targets.values())
+    for target in targets:
+        print(target.status + ' : ' + target.file_name + ' => ' + target.detail)
 
-    print('---------- remove ----------')
-    for path in remove_file_paths:
-        os.remove(path)
-        print('removed: ' + path)
- 
+    client.update(SPREADSHEET_ID, send_rows.values())
+
+    print('---------- remove target files ----------')
+    for target in targets:
+        if target.should_remove():
+            os.remove(target.renamed_path)
+            print('removed: ' + target.renamed_path)
+
 if __name__ == '__main__':
     main()
