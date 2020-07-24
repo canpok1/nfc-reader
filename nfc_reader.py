@@ -4,7 +4,11 @@ import os
 import RPi.GPIO as GPIO
 import time
 import datetime
-from google.cloud import logging
+import logging
+import sys
+
+import google.cloud.logging
+from google.cloud.logging.handlers import CloudLoggingHandler
 
 APP_NAME = 'nfc-reader'
 LED_RED_PIN = 11
@@ -12,11 +16,26 @@ LED_GREEN_PIN = 12
 BUZZER_PIN = 32
 BUZZER_FREQ = 1200
 OUTPUT_DIR = '/tmp/nfc-reader'
+
+def makeLogger(name):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+
+    client = google.cloud.logging.Client()
+    gcpHandler = CloudLoggingHandler(client, name=APP_NAME)
+    gcpHandler.setLevel(logging.INFO)
+    logger.addHandler(gcpHandler)
+
+    stdoutHandler = logging.StreamHandler(sys.stdout)
+    stdoutHandler.setLevel(logging.DEBUG)
+    logger.addHandler(stdoutHandler)
+
+    return logger
  
 class MyCardReader(object):
     def __init__(self):
         self.buzzer = GPIO.PWM(BUZZER_PIN, BUZZER_FREQ)
-        self.logger = Logger()
+        self.logger = makeLogger(self.__class__.__name__)
 
     def on_connect(self, tag):
         #タッチ時の処理 
@@ -45,51 +64,28 @@ class MyCardReader(object):
  
             #IDmのみ取得して表示 
             idm = binascii.hexlify(tag._nfcid).decode("UTF-8")
-            self.logger.debug("IDm : " + str(idm))
+            self.logger.debug("IDm : %s", str(idm))
  
             now = datetime.datetime.now()
             log_path = OUTPUT_DIR + '/' + idm + '_' + now.strftime('%Y%m%d_%H%M%S')
-            self.logger.debug("log path : " + log_path)
+            self.logger.debug("log path : %s", log_path)
 
-            self.logger.info("touched and saved [IDm:" + str(idm) + ", output:" + log_path + "]")
+            self.logger.info("touched and saved [IDm:%s, output:%s]", str(idm), log_path)
 
             with open(log_path, mode='w') as f:
                 f.write(str(tag))
         except Exception as e:
             self.logger.error(e)
 
-class Logger(object):
-    def __init__(self):
-        self.level = 0
-
-        self.logger = None
-        if os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '') != '':
-            logging_client = logging.Client()
-            self.logger = logging_client.logger(APP_NAME)
-
-    def debug(self, value):
-        print(value)
-
-    def info(self, value):
-        self._print('info', value)
-
-    def error(self, value):
-        self._print('error', value)
-
-    def _print(self, level, value):
-        print(value)
-        if self.logger is not None :
-            self.logger.log_text(str(value))
- 
 if __name__ == '__main__':
     GPIO.setmode(GPIO.BOARD)
     GPIO.setup(LED_RED_PIN, GPIO.OUT)
     GPIO.setup(LED_GREEN_PIN, GPIO.OUT)
     GPIO.setup(BUZZER_PIN, GPIO.OUT)
 
-    logger = Logger()
+    logger = makeLogger(__name__)
     try:
-        logger.info("start " + APP_NAME)
+        logger.info("start %s", APP_NAME)
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -106,5 +102,5 @@ if __name__ == '__main__':
             #リリース時の処理 
             logger.debug("【 Released 】")
     finally:
-        logger.info("stop " + APP_NAME)
+        logger.info("stop %s", APP_NAME)
         GPIO.cleanup()
