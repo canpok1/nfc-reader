@@ -2,19 +2,41 @@ import glob
 import os
 import pickle
 import datetime
+import logging
+import sys
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+import google.cloud.logging
+from google.cloud.logging.handlers import CloudLoggingHandler
+
+APP_NAME = 'nfc-reader-sender'
 WATCH_TARGET = '/tmp/nfc-reader/*'
 SPREADSHEET_ID = '1m9qYN7rzIrnciJHBXfxrqJgdDSTeVSeWHroAH5JQ6Rs'
 RANGE_NAME = 'NFCタグ!A:B'
 
+def makeLogger(name):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+
+    client = google.cloud.logging.Client()
+    gcpHandler = CloudLoggingHandler(client, name=APP_NAME)
+    gcpHandler.setLevel(logging.INFO)
+    logger.addHandler(gcpHandler)
+
+    stdoutHandler = logging.StreamHandler(sys.stdout)
+    stdoutHandler.setLevel(logging.DEBUG)
+    logger.addHandler(stdoutHandler)
+
+    return logger
+
 class SheetClient(object):
     def __init__(self):
+        self.logger = makeLogger(self.__class__.__name__)
         self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
-        self.creds_file = 'credentials.json'
-        self.creds_token = 'token.pickle'
+        self.creds_file = 'credentials/credentials.json'
+        self.creds_token = 'credentials/token.pickle'
         self.creds = self.__load_creds()
         self.service = self.__build_service()
 
@@ -59,11 +81,12 @@ class SheetClient(object):
             body['data'].append(data)
 
         result = sheet.values().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
-        # print('update result : ')
-        # print(result)
+        self.logger.debug('update result : ')
+        self.logger.debug(result)
 
 class SendTarget():
     def __init__(self, path):
+        self.logger = makeLogger(self.__class__.__name__)
         self.__path = path
         self.__renamed_path = None
 
@@ -155,6 +178,7 @@ class SendTarget():
 
 class Row():
     def __init__(self, index, idm, yyyymmdd, hhmmss):
+        self.logger = makeLogger(self.__class__.__name__)
         self.index = index
         self.idm = idm
         self.yyyymmdd = yyyymmdd
@@ -168,14 +192,15 @@ class Row():
         return [[self.idm, self.datetime.strftime('%Y/%m/%d %H:%M:%S')]]
 
 def main():
+    logger = makeLogger(__name__)
     targets = []
     should_send = False
 
-    print('---------- load files (' + WATCH_TARGET + ')----------')
+    logger.debug('---------- load files (' + WATCH_TARGET + ')----------')
     files = sorted(glob.glob(WATCH_TARGET), reverse=True)
     skip_count = 0
     if len(files) == 0:
-        print('file is empty')
+        logger.debug('file is empty')
         return
     for file in files:
         target = SendTarget(file)
@@ -187,20 +212,20 @@ def main():
 
     if should_send:
         count = len(files)
-        print(str(count) + ' files found. (' + str(skip_count) + ' files skip)')
+        logger.info(str(count) + ' files found. ' + str(skip_count) + ' files skip. (' + WATCH_TARGET + ')')
     else:
         for target in targets:
-            print(target.status + ' : ' + target.file_name + ' => ' + target.detail)
+            logger.info(target.status + ' : ' + target.file_name + ' => ' + target.detail)
         return
 
-    print('---------- rename target files ----------')
+    logger.debug('---------- rename target files ----------')
     for target in targets:
         if not target.is_valid:
             continue
         target.rename()
-        print('renamed: ' + target.path + ' => ' + target.renamed_path)
+        logger.info('renamed: ' + target.path + ' => ' + target.renamed_path)
 
-    print('---------- send targets ----------')
+    logger.debug('---------- send targets ----------')
     client = SheetClient()
     values = client.get_values(SPREADSHEET_ID, RANGE_NAME)
     registered_idms = {}
@@ -224,15 +249,15 @@ def main():
             send_rows[target.idm] = Row(index, target.idm, target.yyyymmdd, target.hhmmss)
 
     for target in targets:
-        print(target.status + ' : ' + target.file_name + ' => ' + target.detail)
+        logger.info(target.status + ' : ' + target.file_name + ' => ' + target.detail)
 
     client.update(SPREADSHEET_ID, send_rows.values())
 
-    print('---------- remove target files ----------')
+    logger.debug('---------- remove target files ----------')
     for target in targets:
         if target.should_remove():
             os.remove(target.renamed_path)
-            print('removed: ' + target.renamed_path)
+            logger.info('removed: ' + target.renamed_path)
 
 if __name__ == '__main__':
     main()
