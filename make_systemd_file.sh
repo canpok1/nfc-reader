@@ -2,22 +2,16 @@
 cd $(dirname $0)
 dir=$(pwd)
 
-mkdir -p /etc/sysconfig
-cat << EOS > /etc/sysconfig/nfc-reader-env
-GOOGLE_APPLICATION_CREDENTIALS=${dir}/credentials/gcp-service-account-cred.json
-EOS
-
 cat << EOS > /etc/systemd/system/nfc-reader.service
 [Unit]
 Description = nfc reader
 
 [Service]
-EnvironmentFile = /etc/sysconfig/nfc-reader-env
 ExecStart = ${dir}/start_nfc_reader.sh
 Restart = always
 Type = simple
-StandardOutput = append:/var/log/nfc-reader.log
-StandardError = append:/var/log/nfc-reader.log
+StandardOutput = file:/var/log/nfc-reader.log
+StandardError = file:/var/log/nfc-reader.log
 User = pi
 Group = pi
 
@@ -32,8 +26,8 @@ Description = nfc reader sender
 [Service]
 ExecStart = ${dir}/start_nfc_reader_sender.sh
 Type = oneshot
-StandardOutput = append:/var/log/nfc-reader-sender.log
-StandardError = append:/var/log/nfc-reader-sender.log
+StandardOutput = file:/var/log/nfc-reader-sender.log
+StandardError = file:/var/log/nfc-reader-sender.log
 User = pi
 Group = pi
 EOS
