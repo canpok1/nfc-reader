@@ -4,7 +4,9 @@ import os
 import RPi.GPIO as GPIO
 import time
 import datetime
+from google.cloud import logging
 
+APP_NAME = 'nfc-reader'
 LED_RED_PIN = 11
 LED_GREEN_PIN = 12
 BUZZER_PIN = 32
@@ -14,10 +16,11 @@ OUTPUT_DIR = '/tmp/nfc-reader'
 class MyCardReader(object):
     def __init__(self):
         self.buzzer = GPIO.PWM(BUZZER_PIN, BUZZER_FREQ)
+        self.logger = Logger()
 
     def on_connect(self, tag):
         #タッチ時の処理 
-        print("【 Touched 】")
+        self.logger.debug("【 Touched 】")
         GPIO.output(LED_RED_PIN,False)
         GPIO.output(LED_GREEN_PIN,True)
         self.buzzer.start(50)
@@ -38,20 +41,45 @@ class MyCardReader(object):
     def save_touched_log(self, tag):
         try:
             #タグ情報を全て表示 
-            print(tag)
+            self.logger.debug(tag)
  
             #IDmのみ取得して表示 
             idm = binascii.hexlify(tag._nfcid).decode("UTF-8")
-            print("IDm : " + str(idm))
+            self.logger.debug("IDm : " + str(idm))
  
             now = datetime.datetime.now()
             log_path = OUTPUT_DIR + '/' + idm + '_' + now.strftime('%Y%m%d_%H%M%S')
-            print("log path : " + log_path)
+            self.logger.debug("log path : " + log_path)
+
+            self.logger.info("touched and saved [IDm:" + str(idm) + ", output:" + log_path + "]")
 
             with open(log_path, mode='w') as f:
                 f.write(str(tag))
         except Exception as e:
-            print(e)
+            self.logger.error(e)
+
+class Logger(object):
+    def __init__(self):
+        self.level = 0
+
+        self.logger = None
+        if os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '') != '':
+            logging_client = logging.Client()
+            self.logger = logging_client.logger(APP_NAME)
+
+    def debug(self, value):
+        print(value)
+
+    def info(self, value):
+        self._print('info', value)
+
+    def error(self, value):
+        self._print('error', value)
+
+    def _print(self, level, value):
+        print(value)
+        if self.logger is not None :
+            self.logger.log_text(str(value))
  
 if __name__ == '__main__':
     GPIO.setmode(GPIO.BOARD)
@@ -59,13 +87,16 @@ if __name__ == '__main__':
     GPIO.setup(LED_GREEN_PIN, GPIO.OUT)
     GPIO.setup(BUZZER_PIN, GPIO.OUT)
 
+    logger = Logger()
     try:
+        logger.info("start " + APP_NAME)
+
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
         cr = MyCardReader()
         while True:
             #最初に表示 
-            print("Please Touch")
+            logger.debug("Please Touch")
             GPIO.output(LED_RED_PIN,True)
             GPIO.output(LED_GREEN_PIN,False)
 
@@ -73,6 +104,7 @@ if __name__ == '__main__':
             cr.read_id()
 
             #リリース時の処理 
-            print("【 Released 】")
+            logger.debug("【 Released 】")
     finally:
+        logger.info("stop " + APP_NAME)
         GPIO.cleanup()
